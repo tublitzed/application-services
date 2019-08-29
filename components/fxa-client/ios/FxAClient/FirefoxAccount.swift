@@ -56,7 +56,7 @@ open class FirefoxAccount {
     private let raw: UInt64
     private var persistCallback: PersistCallback?
 
-    private init(raw: UInt64) {
+    internal init(raw: UInt64) {
         self.raw = raw
     }
 
@@ -147,17 +147,23 @@ open class FirefoxAccount {
     open func getProfile(completionHandler: @escaping (Profile?, Error?) -> Void) {
         queue.async {
             do {
-                let profileBuffer = try FirefoxAccountError.unwrap { err in
-                    fxa_profile(self.raw, false, err)
-                }
-                let msg = try! MsgTypes_Profile(serializedData: Data(rustBuffer: profileBuffer))
-                fxa_bytebuffer_free(profileBuffer)
-                let profile = Profile(msg: msg)
+                let profile = try self.getProfileSync()
                 DispatchQueue.main.async { completionHandler(profile, nil) }
-                self.tryPersistState()
             } catch {
                 DispatchQueue.main.async { completionHandler(nil, error) }
             }
+        }
+    }
+
+    open func getProfileSync() throws -> Profile {
+        return try queue.sync {
+            let profileBuffer = try FirefoxAccountError.unwrap { err in
+                fxa_profile(self.raw, false, err)
+            }
+            self.tryPersistState()
+            let msg = try! MsgTypes_Profile(serializedData: Data(rustBuffer: profileBuffer))
+            fxa_bytebuffer_free(profileBuffer)
+            return Profile(msg: msg)
         }
     }
 
@@ -203,14 +209,29 @@ open class FirefoxAccount {
     open func beginOAuthFlow(scopes: [String], completionHandler: @escaping (URL?, Error?) -> Void) {
         queue.async {
             do {
-                let scope = scopes.joined(separator: " ")
-                let url = URL(string: String(freeingFxaString: try FirefoxAccountError.unwrap { err in
-                    fxa_begin_oauth_flow(self.raw, scope, err)
-                }))!
+                let url = try self.beginOAuthFlowSync(scopes: scopes)
                 DispatchQueue.main.async { completionHandler(url, nil) }
             } catch {
                 DispatchQueue.main.async { completionHandler(nil, error) }
             }
+        }
+    }
+
+    open func beginOAuthFlowSync(scopes: [String]) throws -> URL {
+        let scope = scopes.joined(separator: " ")
+        return try queue.sync {
+            URL(string: String(freeingFxaString: try FirefoxAccountError.unwrap { err in
+                fxa_begin_oauth_flow(self.raw, scope, err)
+            }))!
+        }
+    }
+
+    open func beginPairingFlowSync(pairingUrl: String, scopes: [String]) throws -> URL {
+        let scope = scopes.joined(separator: " ")
+        return try queue.sync {
+            URL(string: String(freeingFxaString: try FirefoxAccountError.unwrap { err in
+                fxa_begin_pairing_flow(self.raw, pairingUrl, scope, err)
+            }))!
         }
     }
 
@@ -221,14 +242,20 @@ open class FirefoxAccount {
     open func completeOAuthFlow(code: String, state: String, completionHandler: @escaping (Void, Error?) -> Void) {
         queue.async {
             do {
-                try FirefoxAccountError.unwrap { err in
-                    fxa_complete_oauth_flow(self.raw, code, state, err)
-                }
+                try self.completeOAuthFlowSync(code: code, state: state)
                 DispatchQueue.main.async { completionHandler((), nil) }
-                self.tryPersistState()
             } catch {
                 DispatchQueue.main.async { completionHandler((), error) }
             }
+        }
+    }
+
+    open func completeOAuthFlowSync(code: String, state: String) throws {
+        try queue.sync {
+            try FirefoxAccountError.unwrap { err in
+                fxa_complete_oauth_flow(self.raw, code, state, err)
+            }
+            self.tryPersistState()
         }
     }
 
@@ -240,13 +267,7 @@ open class FirefoxAccount {
     open func getAccessToken(scope: String, completionHandler: @escaping (AccessTokenInfo?, Error?) -> Void) {
         queue.async {
             do {
-                let infoBuffer = try FirefoxAccountError.unwrap { err in
-                    fxa_get_access_token(self.raw, scope, err)
-                }
-                self.tryPersistState()
-                let msg = try! MsgTypes_AccessTokenInfo(serializedData: Data(rustBuffer: infoBuffer))
-                fxa_bytebuffer_free(infoBuffer)
-                let tokenInfo = AccessTokenInfo(msg: msg)
+                let tokenInfo = try self.getAccessTokenSync(scope: scope)
                 DispatchQueue.main.async { completionHandler(tokenInfo, nil) }
             } catch {
                 DispatchQueue.main.async { completionHandler(nil, error) }
@@ -254,20 +275,38 @@ open class FirefoxAccount {
         }
     }
 
+    open func getAccessTokenSync(scope: String) throws -> AccessTokenInfo {
+        return try queue.sync {
+            let infoBuffer = try FirefoxAccountError.unwrap { err in
+                fxa_get_access_token(self.raw, scope, err)
+            }
+            self.tryPersistState()
+            let msg = try! MsgTypes_AccessTokenInfo(serializedData: Data(rustBuffer: infoBuffer))
+            fxa_bytebuffer_free(infoBuffer)
+            return AccessTokenInfo(msg: msg)
+        }
+    }
+
     /// Check whether the refreshToken is active
     open func checkAuthorizationStatus(completionHandler: @escaping (IntrospectInfo?, Error?) -> Void) {
         queue.async {
             do {
-                let infoBuffer = try FirefoxAccountError.unwrap { err in
-                    fxa_check_authorization_status(self.raw, err)
-                }
-                let msg = try! MsgTypes_IntrospectInfo(serializedData: Data(rustBuffer: infoBuffer))
-                fxa_bytebuffer_free(infoBuffer)
-                let tokenInfo = IntrospectInfo(msg: msg)
+                let tokenInfo = try self.checkAuthorizationStatusSync()
                 DispatchQueue.main.async { completionHandler(tokenInfo, nil) }
             } catch {
                 DispatchQueue.main.async { completionHandler(nil, error) }
             }
+        }
+    }
+
+    open func checkAuthorizationStatusSync() throws -> IntrospectInfo {
+        return try queue.sync {
+            let infoBuffer = try FirefoxAccountError.unwrap { err in
+                fxa_check_authorization_status(self.raw, err)
+            }
+            let msg = try! MsgTypes_IntrospectInfo(serializedData: Data(rustBuffer: infoBuffer))
+            fxa_bytebuffer_free(infoBuffer)
+            return IntrospectInfo(msg: msg)
         }
     }
 
@@ -279,12 +318,18 @@ open class FirefoxAccount {
     open func clearAccessTokenCache(completionHandler: @escaping (Void, Error?) -> Void) {
         queue.async {
             do {
-                try FirefoxAccountError.unwrap { err in
-                    fxa_clear_access_token_cache(self.raw, err)
-                }
+                try self.clearAccessTokenCacheSync()
                 DispatchQueue.main.async { completionHandler((), nil) }
             } catch {
                 DispatchQueue.main.async { completionHandler((), error) }
+            }
+        }
+    }
+
+    open func clearAccessTokenCacheSync() throws {
+        try queue.sync {
+            try FirefoxAccountError.unwrap { err in
+                fxa_clear_access_token_cache(self.raw, err)
             }
         }
     }
@@ -294,15 +339,111 @@ open class FirefoxAccount {
     open func disconnect(completionHandler: @escaping (Void, Error?) -> Void) {
         queue.async {
             do {
-                try FirefoxAccountError.unwrap { err in
-                    fxa_disconnect(self.raw, err)
-                }
+                try self.disconnectSync()
                 DispatchQueue.main.async { completionHandler((), nil) }
-                self.tryPersistState()
             } catch {
                 DispatchQueue.main.async { completionHandler((), error) }
             }
         }
+    }
+
+    open func disconnectSync() throws {
+        try queue.sync {
+            try FirefoxAccountError.unwrap { err in
+                fxa_disconnect(self.raw, err)
+            }
+            self.tryPersistState()
+        }
+    }
+
+    open func fetchDevicesSync() throws -> [Device] {
+        return try queue.sync {
+            let devicesBuffer = try FirefoxAccountError.unwrap { err in
+                fxa_get_devices(self.raw, err)
+            }
+            let msg = try! MsgTypes_Devices(serializedData: Data(rustBuffer: devicesBuffer))
+            fxa_bytebuffer_free(devicesBuffer)
+            return Device.fromCollectionMsg(msg: msg)
+        }
+    }
+
+    open func setDeviceDisplayNameSync(_ name: String) throws {
+        return try queue.sync {
+            try FirefoxAccountError.unwrap { err in
+                fxa_set_device_name(self.raw, name, err)
+            }
+        }
+    }
+
+    open func pollDeviceCommandsSync() throws -> [DeviceEvent] {
+        return try queue.sync {
+            let eventsBuffer = try FirefoxAccountError.unwrap { err in
+                fxa_poll_device_commands(self.raw, err)
+            }
+            self.tryPersistState()
+            let msg = try! MsgTypes_AccountEvents(serializedData: Data(rustBuffer: eventsBuffer))
+            fxa_bytebuffer_free(eventsBuffer)
+            return DeviceEvent.fromCollectionMsg(msg: msg)
+        }
+    }
+
+    open func handlePushMessageSync(payload: String) throws -> [DeviceEvent] {
+        return try queue.sync {
+            let eventsBuffer = try FirefoxAccountError.unwrap { err in
+                fxa_handle_push_message(self.raw, payload, err)
+            }
+            self.tryPersistState()
+            let msg = try! MsgTypes_AccountEvents(serializedData: Data(rustBuffer: eventsBuffer))
+            fxa_bytebuffer_free(eventsBuffer)
+            return DeviceEvent.fromCollectionMsg(msg: msg)
+        }
+    }
+
+    open func sendSingleTabSync(targetId: String, title: String, url: String) throws {
+        try queue.sync {
+            try FirefoxAccountError.unwrap { err in
+                fxa_send_tab(self.raw, targetId, title, url, err)
+            }
+        }
+    }
+
+    open func setDevicePushSubscriptionSync(endpoint: String, publicKey: String, authKey: String) throws {
+        try queue.sync {
+            try FirefoxAccountError.unwrap { err in
+                fxa_set_push_subscription(self.raw, endpoint, publicKey, authKey, err)
+            }
+        }
+    }
+
+    open func initializeDeviceSync(name: String, deviceType: DeviceType, supportedCapabilities: [DeviceCapability]) throws {
+        try queue.sync {
+            let (data, size) = capabilitiesToBuffer(capabilities: supportedCapabilities)
+            try data.withUnsafeBytes { bytes in
+                try FirefoxAccountError.unwrap { err in
+                    fxa_initialize_device(self.raw, name, Int32(deviceType.toMsg().rawValue), bytes, size, err)
+                }
+            }
+        }
+    }
+
+    open func ensureCapabilitiesSync(supportedCapabilities: [DeviceCapability]) throws {
+        try queue.sync {
+            let (data, size) = capabilitiesToBuffer(capabilities: supportedCapabilities)
+            try data.withUnsafeBytes { bytes in
+                try FirefoxAccountError.unwrap { err in
+                    fxa_ensure_capabilities(self.raw, bytes, size, err)
+                }
+            }
+        }
+    }
+
+    internal func capabilitiesToBuffer(capabilities: [DeviceCapability]) -> (Data, Int32) {
+        let msg = MsgTypes_Capabilities.with {
+            $0.capability = capabilities.map { $0.toMsg() }
+        }
+        let data = try! msg.serializedData()
+        let size = Int32(data.count)
+        return (data, size)
     }
 }
 
