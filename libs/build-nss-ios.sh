@@ -106,6 +106,7 @@ if [[ "${ARCH}" == "x86_64" ]]; then
   cp -p -L "${BUILD_DIR}/lib/libgcm-aes-x86_c_lib.a" "${DIST_DIR}/lib"
 elif [[ "${ARCH}" == "arm64" ]]; then
   cp -p -L "${BUILD_DIR}/lib/libgcm-aes-aarch64_c_lib.a" "${DIST_DIR}/lib"
+  cp -p -L "${BUILD_DIR}/lib/libarmv8_c_lib.a" "${DIST_DIR}/lib"
 fi
 cp -p -L "${NSPR_BUILD_DIR}/dist/lib/libplc4.a" "${DIST_DIR}/lib"
 cp -p -L "${NSPR_BUILD_DIR}/dist/lib/libplds4.a" "${DIST_DIR}/lib"
